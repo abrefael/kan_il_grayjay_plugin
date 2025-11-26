@@ -6,13 +6,15 @@
     const BASE = "https://www.kan.org.il";
 
     // ----------------------------
-    // Utility: fetch and parse HTML
+    // Utility: fetch HTML
     // ----------------------------
     async function fetchHtml(url) {
         try {
             const res = await fetch(url);
+            console.log("KAN: fetch", url, res.status);
             if (!res.ok) throw new Error("HTTP error " + res.status);
             const text = await res.text();
+            console.log("KAN: fetched HTML length", text.length);
             return new DOMParser().parseFromString(text, "text/html");
         } catch (e) {
             console.error("KAN: fetchHtml error", e, url);
@@ -21,7 +23,7 @@
     }
 
     // ----------------------------
-    // Utility: parse duration text "29 דקות"
+    // Utility: parse duration like "29 דקות"
     // ----------------------------
     function parseDuration(text) {
         if (!text) return null;
@@ -35,12 +37,14 @@
     function parseShowList(doc) {
         if (!doc) return [];
         const items = Array.from(doc.querySelectorAll(".card-link.d-inline-block"));
-        return items.map(a => ({
+        const results = items.map(a => ({
             title: a.querySelector(".card-body .details p")?.innerText?.trim() || a.querySelector("img")?.alt,
             pageUrl: a.href,
             thumbnail: a.querySelector("img")?.src || null,
             description: a.querySelector(".details p")?.innerText?.trim() || "",
         }));
+        console.log("KAN: parsed shows", results.length);
+        return results;
     }
 
     // ----------------------------
@@ -49,7 +53,7 @@
     function parsePodcastEpisodes(doc) {
         if (!doc) return [];
         const cards = Array.from(doc.querySelectorAll(".card.card-row"));
-        return cards.map(card => {
+        const results = cards.map(card => {
             const title = card.querySelector(".card-title")?.innerText?.trim();
             const description = card.querySelector(".description")?.innerText?.trim();
             const thumbnail = card.querySelector("img")?.src;
@@ -59,6 +63,8 @@
             const link = card.querySelector("a.card-img")?.href;
             return { title, description, thumbnail, duration, publishedAt, pageUrl: link };
         });
+        console.log("KAN: parsed podcast episodes", results.length);
+        return results;
     }
 
     // ----------------------------
@@ -134,6 +140,7 @@
             if (!nextPageEl || nextPageEl.classList.contains("disabled")) break;
             page++;
         }
+        console.log("KAN: total paginated items", results.length);
         return results;
     }
 
@@ -142,7 +149,7 @@
     // ----------------------------
     this.KANPlugin = {
         name: "KAN",
-        version: "1.0.1",
+        version: "1.0.0",
 
         getShows: async function() {
             console.log("KANPlugin: Loading shows...");
@@ -173,7 +180,6 @@
             const doc = await fetchHtml(episodeUrl);
             if (!doc) return null;
 
-            // Decide if video or audio
             if (doc.querySelector('script[type="application/ld+json"]')) {
                 return await parseVideoPage(doc.documentElement.outerHTML);
             }
