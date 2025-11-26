@@ -9,7 +9,7 @@ const BASE = "https://www.kan.org.il";
 // Plugin info
 // ====================================================
 
-export function getPluginInfo() {
+function getPluginInfo() {
     return {
         id: "il.kan",
         name: "KAN Israel (Template)",
@@ -24,7 +24,7 @@ export function getPluginInfo() {
 // Discover (top-level menu)
 // ====================================================
 
-export async function discover() {
+async function discover() {
     return [
         { id: "shows_root", title: "תוכניות טלוויזיה", type: "directory" },
         { id: "podcasts_root", title: "פודקאסטים", type: "directory" }
@@ -36,7 +36,7 @@ export async function discover() {
 // Explore (list shows, list podcasts, list episodes)
 // ====================================================
 
-export async function explore(itemId) {
+async function explore(itemId) {
 
     // -------------------------------------
     // SHOW LIST
@@ -148,7 +148,7 @@ async function getItem(itemId) {
 // getStreams – return playable media URLs
 // ====================================================
 
-export async function getStreams(item) {
+async function getStreams(item) {
     if (item.type === "audio") {
         return [{
             url: item.audioUrl,
