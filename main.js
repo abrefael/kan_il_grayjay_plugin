@@ -140,9 +140,9 @@
     // ----------------------------
     // KAN Plugin Object
     // ----------------------------
-    window.KANPlugin = {
+    this.KANPlugin = {
         name: "KAN",
-        version: "1.0.0",
+        version: "1.0.1",
 
         getShows: async function() {
             console.log("KANPlugin: Loading shows...");
