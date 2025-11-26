@@ -1,20 +1,124 @@
 // ============================
-// KAN Grayjay Plugin
+// KAN Grayjay Plugin (no-npm fallbacks)
 // ============================
 
 (function() {
     const BASE = "https://www.kan.org.il";
 
     // ----------------------------
-    // Utility: fetch HTML
+    // Environment fallbacks (no npm required)
+    // - fetch: use native fetch or XHR-based polyfill when available
+    // - DOMParser: use native DOMParser or document.implementation.createHTMLDocument
+    // ----------------------------
+    if (typeof fetch === "undefined") {
+        if (typeof XMLHttpRequest !== "undefined") {
+            globalThis.fetch = function(url, options) {
+                return new Promise((resolve, reject) => {
+                    try {
+                        const xhr = new XMLHttpRequest();
+                        const method = (options && options.method) || "GET";
+                        xhr.open(method, url, true);
+
+                        if (options && options.headers) {
+                            try {
+                                const headers = options.headers;
+                                if (headers.forEach) {
+                                    headers.forEach((v, k) => xhr.setRequestHeader(k, v));
+                                } else {
+                                    for (const k in headers) {
+                                        if (Object.prototype.hasOwnProperty.call(headers, k)) {
+                                            xhr.setRequestHeader(k, headers[k]);
+                                        }
+                                    }
+                                }
+                            } catch (e) {
+                                // ignore header setting errors
+                            }
+                        }
+
+                        xhr.onreadystatechange = function() {
+                            if (xhr.readyState === 4) {
+                                const status = xhr.status === 1223 ? 204 : xhr.status; // weird IE quirk
+                                const ok = status >= 200 && status < 300;
+                                const responseText = xhr.responseText;
+                                resolve({
+                                    ok: ok,
+                                    status: status,
+                                    text: () => Promise.resolve(responseText),
+                                    json: () => {
+                                        try {
+                                            return Promise.resolve(JSON.parse(responseText));
+                                        } catch (e) {
+                                            return Promise.reject(e);
+                                        }
+                                    },
+                                    // minimal headers object
+                                    headers: {
+                                        get: function() { return null; }
+                                    }
+                                });
+                            }
+                        };
+                        xhr.onerror = function() {
+                            reject(new TypeError("Network request failed"));
+                        };
+                        xhr.send(options && options.body ? options.body : null);
+                    } catch (e) {
+                        reject(e);
+                    }
+                });
+            };
+            console.log("KAN: fetch fallback using XMLHttpRequest");
+        } else {
+            console.warn("KAN: fetch is not available and XMLHttpRequest fallback is not possible");
+        }
+    }
+
+    if (typeof DOMParser === "undefined") {
+        if (typeof document !== "undefined" && document.implementation && typeof document.implementation.createHTMLDocument === "function") {
+            globalThis.DOMParser = class {
+                parseFromString(str /*, contentType */) {
+                    // create a fresh HTML document and set its contents
+                    const doc = document.implementation.createHTMLDocument("");
+                    // Some content includes <html> etc; set documentElement.innerHTML when possible
+                    try {
+                        // For full HTML string, assign to documentElement.outerHTML gives problems,
+                        // so try to parse by writing into body if present
+                        const bodyMatch = str.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+                        if (bodyMatch) {
+                            doc.body.innerHTML = bodyMatch[1];
+                        } else {
+                            // No explicit body: place entire string inside documentElement
+                            doc.documentElement.innerHTML = str;
+                        }
+                    } catch (e) {
+                        // As fallback, put raw string into a div and return its document
+                        const wrapper = document.createElement("div");
+                        wrapper.innerHTML = str;
+                        // create a minimal doc-like object with querySelectorAll
+                        return wrapper;
+                    }
+                    return doc;
+                }
+            };
+            console.log("KAN: DOMParser fallback using document.implementation.createHTMLDocument");
+        } else {
+            console.warn("KAN: DOMParser is not available and document-based fallback is not possible");
+        }
+    }
+
+    // ----------------------------
+    // Utility: fetch HTML -> returns Document
     // ----------------------------
     async function fetchHtml(url) {
         try {
             const res = await fetch(url);
-            console.log("KAN: fetch", url, res.status);
+            console.log("KAN: fetch", url, "status", res.status);
             if (!res.ok) throw new Error("HTTP error " + res.status);
             const text = await res.text();
             console.log("KAN: fetched HTML length", text.length);
+            // If fetch returned a Document already (unlikely), pass through
+            if (text && typeof text !== "string" && text.querySelector) return text;
             return new DOMParser().parseFromString(text, "text/html");
         } catch (e) {
             console.error("KAN: fetchHtml error", e, url);
@@ -68,26 +172,29 @@
     }
 
     // ----------------------------
-    // Parse a video page (JSON-LD)
+    // Parse a video page (JSON-LD) — accepts Document
     // ----------------------------
-    async function parseVideoPage(html) {
-        const doc = new DOMParser().parseFromString(html, "text/html");
+    async function parseVideoPage(doc) {
+        if (!doc) return null;
         const ldJson = doc.querySelector('script[type="application/ld+json"]');
         if (!ldJson) return null;
 
         let data;
         try {
-            data = JSON.parse(ldJson.innerText);
+            data = JSON.parse(ldJson.textContent);
         } catch (e) {
             console.error("KAN: invalid JSON-LD", e);
             return null;
         }
-        if (!data || data["@type"] !== "VideoObject") return null;
+        if (Array.isArray(data)) {
+            data = data.find(d => d["@type"] === "VideoObject") || data[0];
+        }
+        if (!data || (data["@type"] !== "VideoObject" && data["@type"] !== "Video")) return null;
 
         return {
-            title: data.name?.trim() || "KAN Video",
-            description: data.description?.trim() || "",
-            thumbnail: data.thumbnailUrl || null,
+            title: (data.name && data.name.trim()) || "KAN Video",
+            description: (data.description && data.description.trim()) || "",
+            thumbnail: data.thumbnailUrl || data.thumbnail || null,
             publishedAt: data.uploadDate || null,
             streams: [
                 { url: data.contentUrl, format: "hls", quality: "auto" }
@@ -96,10 +203,10 @@
     }
 
     // ----------------------------
-    // Parse an audio page (MP3)
+    // Parse an audio page (MP3) — accepts Document
     // ----------------------------
-    async function parseAudioPage(html) {
-        const doc = new DOMParser().parseFromString(html, "text/html");
+    async function parseAudioPage(doc) {
+        if (!doc) return null;
         const info = doc.querySelector(".audio-episode-info[data-player-src]");
         if (!info) return null;
 
@@ -147,7 +254,7 @@
     // ----------------------------
     // KAN Plugin Object
     // ----------------------------
-    this.KANPlugin = {
+    const KANPlugin = {
         name: "KAN",
         version: "1.0.0",
 
@@ -181,15 +288,24 @@
             if (!doc) return null;
 
             if (doc.querySelector('script[type="application/ld+json"]')) {
-                return await parseVideoPage(doc.documentElement.outerHTML);
+                return await parseVideoPage(doc);
             }
             if (doc.querySelector(".audio-episode-info[data-player-src]")) {
-                return await parseAudioPage(doc.documentElement.outerHTML);
+                return await parseAudioPage(doc);
             }
             return null;
         }
     };
 
+    // Expose on the global object and as module.exports for Grayjay require()
+    try {
+        const root = (typeof globalThis !== "undefined") ? globalThis : (typeof global !== "undefined" ? global : this);
+        root.KANPlugin = KANPlugin;
+    } catch (e) { /* ignore */ }
+
+    if (typeof module !== "undefined" && module.exports) {
+        module.exports = KANPlugin;
+    }
+
     console.log("KANPlugin loaded.");
 })();
-
