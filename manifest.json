@@ -1,0 +1,12 @@
+{
+  "id": "il.kan",
+  "name": "KAN Israel",
+  "version": "0.1.0",
+  "author": "YourName",
+  "description": "Grayjay extractor plugin for kan.org.il shows and podcasts.",
+  "domains": ["kan.org.il"],
+  "entry": "main.js",
+  "minAppVersion": "1.29.0",
+  "defaultLanguage": "he"
+}
+
