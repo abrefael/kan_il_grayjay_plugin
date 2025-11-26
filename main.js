@@ -1,195 +1,438 @@
-// ============================
-// KAN Grayjay Plugin
-// ============================
+// ====================================================
+// KAN Israel (kan.org.il) – Grayjay Extractor Template
+// Shows + Podcasts
+// ====================================================
 
-(function() {
-    const BASE = "https://www.kan.org.il";
+const BASE = "https://www.kan.org.il";
 
-    // ----------------------------
-    // Utility: fetch HTML
-    // ----------------------------
-    async function fetchHtml(url) {
-        try {
-            const res = await fetch(url);
-            console.log("KAN: fetch", url, res.status);
-            if (!res.ok) throw new Error("HTTP error " + res.status);
-            const text = await res.text();
-            console.log("KAN: fetched HTML length", text.length);
-            return new DOMParser().parseFromString(text, "text/html");
-        } catch (e) {
-            console.error("KAN: fetchHtml error", e, url);
-            return null;
-        }
-    }
+// ====================================================
+// Plugin info
+// ====================================================
 
-    // ----------------------------
-    // Utility: parse duration like "29 דקות"
-    // ----------------------------
-    function parseDuration(text) {
-        if (!text) return null;
-        const match = text.match(/(\d+)\s*דקות/);
-        return match ? parseInt(match[1], 10) * 60 : null;
-    }
+function getPluginInfo() {
+    return {
+        id: "il.kan",
+        name: "KAN Israel (Template)",
+        version: "0.3.0",
+        author: "YourName",
+        description: "Template plugin for KAN shows & podcasts."
+    };
+}
 
-    // ----------------------------
-    // Parse shows list
-    // ----------------------------
-    function parseShowList(doc) {
-        if (!doc) return [];
-        const items = Array.from(doc.querySelectorAll(".card-link.d-inline-block"));
-        const results = items.map(a => ({
-            title: a.querySelector(".card-body .details p")?.innerText?.trim() || a.querySelector("img")?.alt,
-            pageUrl: a.href,
-            thumbnail: a.querySelector("img")?.src || null,
-            description: a.querySelector(".details p")?.innerText?.trim() || "",
+
+// ====================================================
+// Discover (top-level menu)
+// ====================================================
+
+async function discover() {
+    return [
+        { id: "shows_root", title: "תוכניות טלוויזיה", type: "directory" },
+        { id: "podcasts_root", title: "פודקאסטים", type: "directory" }
+    ];
+}
+
+
+// ====================================================
+// Explore (list shows, list podcasts, list episodes)
+// ====================================================
+
+async function explore(itemId) {
+
+    // -------------------------------------
+    // SHOW LIST
+    // -------------------------------------
+    if (itemId === "shows_root") {
+        const url = `${BASE}/lobby/kan-box/`;
+        const html = await request({ url });
+
+        const shows = parseShowList(html);
+
+        return shows.map(show => ({
+            id: `show_${show.id}`,
+            title: show.title,
+            thumbnail: show.thumbnail,
+            type: "directory"
         }));
-        console.log("KAN: parsed shows", results.length);
-        return results;
     }
 
-    // ----------------------------
-    // Parse podcast episodes list
-    // ----------------------------
-    function parsePodcastEpisodes(doc) {
-        if (!doc) return [];
-        const cards = Array.from(doc.querySelectorAll(".card.card-row"));
-        const results = cards.map(card => {
-            const title = card.querySelector(".card-title")?.innerText?.trim();
-            const description = card.querySelector(".description")?.innerText?.trim();
-            const thumbnail = card.querySelector("img")?.src;
-            const duration = parseDuration(card.querySelector("ul.card-list li")?.innerText);
-            const dateEl = card.querySelector(".date-local");
-            const publishedAt = dateEl ? dateEl.dataset.dateUtc : null;
-            const link = card.querySelector("a.card-img")?.href;
-            return { title, description, thumbnail, duration, publishedAt, pageUrl: link };
-        });
-        console.log("KAN: parsed podcast episodes", results.length);
-        return results;
+    // -------------------------------------
+    // PODCAST LIST
+    // -------------------------------------
+    if (itemId === "podcasts_root") {
+        const url = `${BASE}/lobby/podcasts-lobby/`;
+        const html = await request({ url });
+
+        const podcasts = parsePodcastList(html);
+
+        return podcasts.map(p => ({
+            id: `pod_${p.id}`,
+            title: p.title,
+            thumbnail: p.thumbnail,
+            type: "directory"
+        }));
     }
 
-    // ----------------------------
-    // Parse a video page (JSON-LD)
-    // ----------------------------
-    async function parseVideoPage(html) {
-        const doc = new DOMParser().parseFromString(html, "text/html");
-        const ldJson = doc.querySelector('script[type="application/ld+json"]');
-        if (!ldJson) return null;
+    // -------------------------------------
+    // EPISODES OF A PODCAST
+    // -------------------------------------
+    if (itemId.startsWith("pod_")) {
+        const podId = itemId.replace("pod_", "");
+        const url = `${BASE}/content/kan/podcasts/${podId}/`;
+        const html = await request({ url });
 
-        let data;
-        try {
-            data = JSON.parse(ldJson.innerText);
-        } catch (e) {
-            console.error("KAN: invalid JSON-LD", e);
-            return null;
+        const eps = parsePodcastEpisodes(html);
+
+        return eps.map(ep => ({
+            id: `podep_${ep.id}`,
+            title: ep.title,
+            thumbnail: ep.thumbnail,
+            type: "audio"
+        }));
+    }
+
+    // -------------------------------------
+    // EPISODES OF A SHOW
+    // -------------------------------------
+    if (itemId.startsWith("show_")) {
+        const showId = itemId.replace("show_", "");
+        const url = `${BASE}/content/kan/kan-11/${showId}/`;
+        const html = await request({ url });
+
+        const eps = parseShowEpisodes(html);
+
+        return eps.map(ep => ({
+            id: `episode_${ep.id}`,
+            title: ep.title,
+            thumbnail: ep.thumbnail,
+            type: "video"
+        }));
+    }
+
+    return [];
+}
+
+
+// ====================================================
+// getItem – fetch metadata for episode
+// ====================================================
+
+async function getItem(itemId) {
+
+    // -----------------------------
+    // Video episode
+    // -----------------------------
+    if (itemId.startsWith("episode_")) {
+        const epId = itemId.replace("episode_", "");
+        const url = `${BASE}/content/kan/kan-11/${epId}/`;
+        const html = await request({ url });
+
+        return parseVideoPage(html);
+    }
+
+    // -----------------------------
+    // Podcast episode
+    // -----------------------------
+    if (itemId.startsWith("podep_")) {
+        const epId = itemId.replace("podep_", "");
+        const url = `${BASE}/content/kan/podcasts/${epId}/`;
+        const html = await request({ url });
+
+        return parseAudioPage(html);
+    }
+
+    return null;
+}
+
+
+// ====================================================
+// getStreams – return playable media URLs
+// ====================================================
+
+async function getStreams(item) {
+    if (item.type === "audio") {
+        return [{
+            url: item.audioUrl,
+            format: "audio",
+            quality: "default"
+        }];
+    }
+
+    if (item.type === "video") {
+        return [{
+            url: item.streamUrl,
+            format: "hls",
+            quality: "auto"
+        }];
+    }
+
+    return [];
+}
+
+
+// ====================================================
+// Utility Parsers – Implement these
+// ====================================================
+
+// HTML parsing helper
+function parseHTML(str) {
+    return new DOMParser().parseFromString(str, "text/html");
+}
+
+// ----------------------------------------------------
+// Parse list of shows from /lobby/series/
+// ----------------------------------------------------
+
+function parseShowList(html) {
+    const doc = parseHTML(html);
+    const out = [];
+
+    // Select all show cards (both types: .card-link.d-inline-block and .card.card-row...)
+    const items = doc.querySelectorAll("a.card-link.d-inline-block, a.card.card-row.card-row-xs.card-link");
+
+    items.forEach(el => {
+        const href = el.getAttribute("href");
+        if (!href) return;
+
+        const id = extractIdFromUrl(href); // e.g., last segment "962212" or "694881"
+
+        // Thumbnail
+        const img = el.querySelector("img");
+        const thumbnail = img?.src ?? "";
+        const thumbnailUrl = thumbnail.startsWith("/") ? BASE + thumbnail : thumbnail;
+
+        // Title
+        const title = img?.alt?.trim() || img?.title?.trim() || "No title";
+
+        // Description / details
+        let desc = "";
+        const details = el.querySelectorAll(".details p");
+        if (details.length) {
+            desc = Array.from(details).map(p => p.textContent.trim()).join(" | ");
+        } else {
+            // fallback for episode-style cards
+            desc = el.querySelector(".card-text")?.textContent?.trim() || "";
         }
-        if (!data || data["@type"] !== "VideoObject") return null;
 
-        return {
-            title: data.name?.trim() || "KAN Video",
-            description: data.description?.trim() || "",
-            thumbnail: data.thumbnailUrl || null,
-            publishedAt: data.uploadDate || null,
-            streams: [
-                { url: data.contentUrl, format: "hls", quality: "auto" }
-            ]
-        };
-    }
+        out.push({
+            id,
+            title,
+            description: desc,
+            thumbnail: thumbnailUrl,
+            url: href
+        });
+    });
 
-    // ----------------------------
-    // Parse an audio page (MP3)
-    // ----------------------------
-    async function parseAudioPage(html) {
-        const doc = new DOMParser().parseFromString(html, "text/html");
-        const info = doc.querySelector(".audio-episode-info[data-player-src]");
-        if (!info) return null;
+    return out;
+}
 
-        const src = info.getAttribute("data-player-src");
-        const title = info.getAttribute("data-player-title") || doc.querySelector("h2.title")?.innerText?.trim();
-        const description = doc.querySelector(".podcast-content-wrapper .item-content")?.innerText?.trim();
-        const thumbnail = doc.querySelector(".audio-episode-info-image-thumbnail")?.src;
-        const duration = parseDuration(doc.querySelector(".podcast-content-wrapper ul li")?.innerText);
-        const publishedAt = doc.querySelector(".date-local")?.dataset.dateUtc;
 
-        return {
+// ----------------------------------------------------
+// Parse list of podcasts from /lobby/podcasts-lobby/
+// ----------------------------------------------------
+function parsePodcastList(html) {
+    const doc = parseHTML(html);
+    const out = [];
+
+    const items = doc.querySelectorAll("a.podcast-program__item");
+
+    items.forEach(el => {
+        const href = el.getAttribute("href");
+        if (!href) return;
+
+        const id = extractIdFromUrl(href);
+        const img = el.querySelector("img");
+        const thumbnail = img?.src ?? "";
+        const thumbnailUrl = thumbnail.startsWith("/") ? BASE + thumbnail : thumbnail;
+        const title = img?.alt?.trim() || img?.title?.trim() || "No title";
+        let desc = el.querySelectorAll(".podcast-program__item-hidden-text");
+        if (!desc) {
+            desc = "";
+        }
+
+        out.push({
+            id,
+            title,
+            description: desc,
+            thumbnail: thumbnailUrl,
+            url: href
+        });
+    });
+
+    return out;
+}
+
+
+// ----------------------------------------------------
+// Parse podcast episodes from podcast page
+// ----------------------------------------------------
+
+function parsePodcastEpisodesPage(html) {
+    const doc = parseHTML(html);
+    const out = [];
+
+    const items = doc.querySelectorAll("div.card.card-row");
+
+    items.forEach(el => {
+        const link = el.querySelector("a.card-body")?.getAttribute("href");
+        if (!link) return;
+
+        const id = extractIdFromUrl(link);
+
+        const img = el.querySelector("a.card-img.card-media img");
+        const thumbnail = img?.src ?? "";
+        const thumbnailUrl = thumbnail.startsWith("/") ? BASE + thumbnail : thumbnail;
+
+        const title = el.querySelector("h2.card-title")?.textContent?.trim() || "No title";
+        const description = el.querySelector("div.description")?.textContent?.trim() || "";
+
+        const durationLi = el.querySelector("ul.card-list li:not(.date-local)");
+        const duration = durationLi?.textContent?.trim() || "";
+
+        const dateLi = el.querySelector("ul.card-list li.date-local");
+        const date = dateLi?.getAttribute("data-date-utc") || "";
+
+        out.push({
+            id,
             title,
             description,
-            thumbnail,
+            thumbnail: thumbnailUrl,
             duration,
-            publishedAt,
-            streams: [
-                { url: src, format: "audio/mp3", quality: "high" }
-            ]
-        };
+            date,
+            url: link
+        });
+    });
+
+    return out;
+}
+
+
+async function parsePodcastEpisodes(html, baseUrl) {
+    const doc = parseHTML(html);
+    let episodes = parsePodcastEpisodesPage(html);
+
+    // Find pagination links
+    const paginationLinks = Array.from(doc.querySelectorAll("ul.pagination-page__list li.pagination-page__item a.pagination-page__link"))
+        .map(a => a.getAttribute("href"))
+        .filter(href => href && href !== baseUrl); // avoid current page
+
+    // Remove duplicates
+    const uniqueLinks = [...new Set(paginationLinks)];
+
+    for (const pageLink of uniqueLinks) {
+        const fullUrl = pageLink.startsWith("/") ? BASE + pageLink : pageLink;
+        const pageHtml = await request({ url: fullUrl });
+        const pageEpisodes = parsePodcastEpisodesPage(pageHtml);
+        episodes = episodes.concat(pageEpisodes);
     }
 
-    // ----------------------------
-    // Fetch paginated podcast or show pages
-    // ----------------------------
-    async function fetchPaginated(url, parseFn, maxPages = 5) {
-        let page = 1, results = [];
-        while (page <= maxPages) {
-            const fullUrl = page === 1 ? url : url + `?page=${page}`;
-            const doc = await fetchHtml(fullUrl);
-            if (!doc) break;
-            const items = parseFn(doc);
-            if (!items || items.length === 0) break;
-            results = results.concat(items);
+    return episodes;
+}
 
-            // Check if there is a next page
-            const nextPageEl = doc.querySelector(".pagination-next__link");
-            if (!nextPageEl || nextPageEl.classList.contains("disabled")) break;
-            page++;
-        }
-        console.log("KAN: total paginated items", results.length);
-        return results;
+
+
+// ----------------------------------------------------
+// Extract video metadata + stream URL
+// ----------------------------------------------------
+/**
+ * @typedef {Object} VideoSource
+ * @property {string} title
+ * @property {string} description
+ * @property {string} thumbnail
+ * @property {string} mpdUrl
+ * @property {number} duration
+ * @property {string} publishedAt
+ */
+
+function parseVideoPage(html) {
+    const doc = new DOMParser().parseFromString(html, "text/html");
+
+    // Find JSON-LD block
+    const ldJson = doc.querySelector('script[type="application/ld+json"]');
+    if (!ldJson) return null;
+
+    let data;
+    try {
+        data = JSON.parse(ldJson.innerText);
+    } catch (e) {
+        console.error("KAN: invalid JSON-LD", e);
+        return null;
     }
 
-    // ----------------------------
-    // KAN Plugin Object
-    // ----------------------------
-    this.KANPlugin = {
-        name: "KAN",
-        version: "1.0.0",
+    // Make sure it's a VideoObject
+    if (!data || data["@type"] !== "VideoObject") return null;
 
-        getShows: async function() {
-            console.log("KANPlugin: Loading shows...");
-            return await fetchPaginated(BASE + "/lobby/kan-box/", parseShowList, 5);
-        },
+    const title = data.name?.trim() || "KAN Video";
+    const description = data.description?.trim() || "";
+    const thumbnail = data.thumbnailUrl || null;
+    const publishedAt = data.uploadDate || null;
 
-        getShowEpisodes: async function(showUrl) {
-            console.log("KANPlugin: Loading show episodes", showUrl);
-            const doc = await fetchHtml(showUrl);
-            if (!doc) return [];
-            return parsePodcastEpisodes(doc); // reuse podcast parser for episode cards
-        },
+    // This is the main HLS URL (Grayjay can play this directly)
+    const hlsUrl = data.contentUrl;
 
-        getPodcasts: async function() {
-            console.log("KANPlugin: Loading podcasts...");
-            return await fetchPaginated(BASE + "/podcasts/", parsePodcastEpisodes, 5);
-        },
-
-        getPodcastEpisodes: async function(podcastUrl) {
-            console.log("KANPlugin: Loading podcast episodes", podcastUrl);
-            const doc = await fetchHtml(podcastUrl);
-            if (!doc) return [];
-            return parsePodcastEpisodes(doc);
-        },
-
-        getPlayable: async function(episodeUrl) {
-            console.log("KANPlugin: Loading playable", episodeUrl);
-            const doc = await fetchHtml(episodeUrl);
-            if (!doc) return null;
-
-            if (doc.querySelector('script[type="application/ld+json"]')) {
-                return await parseVideoPage(doc.documentElement.outerHTML);
+    return {
+        title,
+        description,
+        thumbnail,
+        publishedAt,
+        streams: [
+            {
+                url: hlsUrl,
+                format: "hls",
+                quality: "auto"
             }
-            if (doc.querySelector(".audio-episode-info[data-player-src]")) {
-                return await parseAudioPage(doc.documentElement.outerHTML);
-            }
-            return null;
-        }
+        ]
     };
+}
 
-    console.log("KANPlugin loaded.");
-})();
+
+
+// ----------------------------------------------------
+// Extract audio metadata + audio URL
+// ----------------------------------------------------
+function parseAudioPage(html) {
+    const doc = new DOMParser().parseFromString(html, "text/html");
+
+    const info = doc.querySelector(".audio-episode-info, .audio-player-play-btn, [data-player-src]");
+    if (!info) return null;
+
+    const src = info.getAttribute("data-player-src");   // MP3 direct link
+    const title = info.getAttribute("data-player-title") 
+               || doc.querySelector("h2.title")?.innerText?.trim()
+               || doc.querySelector(".episode-title")?.innerText?.trim();
+
+    const description = doc.querySelector(".podcast-content-wrapper .item-content")?.innerText?.trim();
+    const thumbnail = doc.querySelector(".audio-episode-info-image-thumbnail")?.src;
+
+    const durationEl = doc.querySelector(".podcast-content-wrapper ul li");
+    const duration = durationEl ? parseDuration(durationEl.innerText) : null;
+
+    const dateEl = doc.querySelector(".date-local");
+    const publishedAt = dateEl ? dateEl.dataset.dateUtc : null;
+
+    return {
+        title,
+        description,
+        thumbnail,
+        duration,
+        publishedAt,
+        streams: [
+            {
+                url: src,
+                format: "audio/mp3",
+                quality: "high"
+            }
+        ]
+    };
+}
+
+
+
+// ----------------------------------------------------
+// Helper: Extract ID/slug from URL
+// You will customize this once you see real URLs.
+// ----------------------------------------------------
+function extractIdFromUrl(url) {
+    if (!url) return "";
+    return url.split("/").filter(x => x).pop();    // last non-empty segment
+}
 
