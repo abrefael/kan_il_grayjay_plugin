@@ -116,7 +116,7 @@ export async function explore(itemId) {
 // getItem – fetch metadata for episode
 // ====================================================
 
-export async function getItem(itemId) {
+async function getItem(itemId) {
 
     // -----------------------------
     // Video episode
